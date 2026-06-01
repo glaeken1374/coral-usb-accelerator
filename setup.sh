@@ -4,10 +4,9 @@
 # What this does:
 #   1. Adds the Google Coral apt repo and installs libedgetpu1-std
 #   2. Reloads udev rules for USB access without root
-#   3. Downloads pre-compiled Python 3.9 and 3.12 (no compilation needed)
-#   4. Creates two venvs:
-#      - venv39  (Python 3.9 + pycoral 2.0)  → object detection
-#      - venv312 (Python 3.12 + tflite 2.17)  → image classification
+#   3. Downloads pre-compiled Python 3.9 (no compilation needed)
+#   4. Creates venv39 (pycoral 2.0 + tflite-runtime 2.5)
+#      — works for both classification and object detection
 #   5. Downloads default models and labels
 #   6. Runs a quick smoke test to confirm the Edge TPU is working
 #
@@ -28,11 +27,11 @@ fail()    { echo -e "${RED}✗ $*${RESET}"; exit 1; }
 header()  { echo -e "\n${BOLD}━━ $* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="$SCRIPT_DIR/venv39/bin/python3.9"
+PIP="$SCRIPT_DIR/venv39/bin/pip"
 
 # ── constants ──────────────────────────────────────────────────────────────────
 PY39_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20240107/cpython-3.9.18%2B20240107-aarch64-unknown-linux-gnu-install_only.tar.gz"
-PY312_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.12.13%2B20260510-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
-TFLITE_WHEEL_URL="https://github.com/feranick/TFlite-builds/releases/download/v2.17.1/tflite_runtime-2.17.1-cp312-cp312-linux_aarch64.whl"
 
 MODEL_BASE="https://github.com/google-coral/test_data/raw/master"
 MODELS=(
@@ -43,18 +42,11 @@ LABELS=(
     "imagenet_labels.txt"
     "coco_labels.txt"
 )
-TEST_IMAGE_URL="$MODEL_BASE/parrot.jpg"
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 require_arch() {
     local arch; arch=$(uname -m)
     [[ "$arch" == "aarch64" ]] || fail "This script requires aarch64 (ARM64). Detected: $arch"
-}
-
-require_root_or_sudo() {
-    if ! sudo -n true 2>/dev/null; then
-        warn "Some steps require sudo. You may be prompted for your password."
-    fi
 }
 
 download_if_missing() {
@@ -82,8 +74,8 @@ run_verify() {
         fail "Coral USB Accelerator not found. Is it plugged in?"
     fi
 
-    info "Testing Edge TPU delegate (classification)..."
-    "$SCRIPT_DIR/venv312/bin/python3.12" - <<'PYEOF'
+    info "Testing Edge TPU delegate..."
+    "$PYTHON" - <<'PYEOF'
 import tflite_runtime.interpreter as tflite
 d = tflite.load_delegate('libedgetpu.so.1')
 print("  delegate loaded:", d)
@@ -91,23 +83,22 @@ PYEOF
     success "Edge TPU delegate OK"
 
     info "Running classification inference on parrot.jpg..."
-    "$SCRIPT_DIR/venv312/bin/python3.12" "$SCRIPT_DIR/run_inference.py" \
+    "$PYTHON" "$SCRIPT_DIR/run_inference.py" \
         "$SCRIPT_DIR/parrot.jpg" \
         "$SCRIPT_DIR/mobilenet_v2_1.0_224_quant_edgetpu.tflite" \
         "$SCRIPT_DIR/imagenet_labels.txt"
     success "Classification smoke test passed"
 
-    info "Testing Edge TPU delegate (detection)..."
-    "$SCRIPT_DIR/venv39/bin/python3.9" - <<'PYEOF'
+    info "Testing detection model..."
+    "$PYTHON" - <<PYEOF
 import tflite_runtime.interpreter as tflite, numpy as np
 delegate = tflite.load_delegate('libedgetpu.so.1')
 interp   = tflite.Interpreter(
-    '/home/glaeken/coral/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite',
+    '$SCRIPT_DIR/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite',
     experimental_delegates=[delegate])
 interp.allocate_tensors()
 inp = interp.get_input_details()[0]
-dummy = np.zeros(inp['shape'], dtype=np.uint8)
-interp.set_tensor(inp['index'], dummy)
+interp.set_tensor(inp['index'], np.zeros(inp['shape'], dtype=np.uint8))
 interp.invoke()
 print("  detection model OK")
 PYEOF
@@ -123,7 +114,10 @@ PYEOF
 # ══════════════════════════════════════════════════════════════════════════════
 
 require_arch
-require_root_or_sudo
+
+if ! sudo -n true 2>/dev/null; then
+    warn "Some steps require sudo. You may be prompted for your password."
+fi
 
 echo -e "${BOLD}"
 echo "  ╔══════════════════════════════════════════════╗"
@@ -133,7 +127,7 @@ echo "  ╚═══════════════════════
 echo -e "${RESET}"
 
 # ── step 1: apt repo + libedgetpu ─────────────────────────────────────────────
-header "Step 1/6 — Edge TPU Runtime"
+header "Step 1/4 — Edge TPU Runtime"
 
 KEYRING=/usr/share/keyrings/coral-edgetpu-archive-keyring.gpg
 SOURCES=/etc/apt/sources.list.d/coral-edgetpu.list
@@ -165,9 +159,7 @@ else
     success "libedgetpu1-std installed"
 fi
 
-# ── step 2: udev ──────────────────────────────────────────────────────────────
-header "Step 2/6 — USB Permissions"
-
+info "Reloading udev rules..."
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 success "udev rules reloaded"
@@ -180,8 +172,8 @@ else
     warn "Log out and back in (or reboot) for group membership to take effect."
 fi
 
-# ── step 3: python 3.9 ────────────────────────────────────────────────────────
-header "Step 3/6 — Python 3.9 (for detection / pycoral)"
+# ── step 2: python 3.9 ────────────────────────────────────────────────────────
+header "Step 2/4 — Python 3.9"
 
 if [[ -x "$SCRIPT_DIR/python39/bin/python3.9" ]]; then
     info "Python 3.9 already installed"
@@ -198,43 +190,15 @@ if [[ ! -d "$SCRIPT_DIR/venv39" ]]; then
     "$SCRIPT_DIR/python39/bin/python3.9" -m venv "$SCRIPT_DIR/venv39"
 fi
 
-info "Installing pycoral into venv39..."
-"$SCRIPT_DIR/venv39/bin/pip" install -q --upgrade pip
-"$SCRIPT_DIR/venv39/bin/pip" install -q \
+info "Installing pycoral + dependencies into venv39..."
+"$PIP" install -q --upgrade pip
+"$PIP" install -q \
     --extra-index-url https://google-coral.github.io/py-repo/ \
     pycoral~=2.0 "numpy<2" Pillow opencv-python-headless
-success "pycoral 2.0 + tflite-runtime 2.5 installed (venv39)"
+success "pycoral 2.0 + tflite-runtime 2.5 installed"
 
-# ── step 4: python 3.12 ───────────────────────────────────────────────────────
-header "Step 4/6 — Python 3.12 (for classification)"
-
-if [[ -x "$SCRIPT_DIR/python312/bin/python3.12" ]]; then
-    info "Python 3.12 already installed"
-else
-    download_if_missing "$PY312_URL" /tmp/cpython312.tar.gz "Python 3.12 standalone"
-    info "Extracting Python 3.12..."
-    mkdir -p "$SCRIPT_DIR/python312"
-    tar -xzf /tmp/cpython312.tar.gz -C "$SCRIPT_DIR/python312" --strip-components=1
-    success "Python $("$SCRIPT_DIR/python312/bin/python3.12" --version) installed"
-fi
-
-if [[ ! -d "$SCRIPT_DIR/venv312" ]]; then
-    info "Creating venv312..."
-    "$SCRIPT_DIR/python312/bin/python3.12" -m venv "$SCRIPT_DIR/venv312"
-fi
-
-info "Installing tflite-runtime into venv312..."
-"$SCRIPT_DIR/venv312/bin/pip" install -q --upgrade pip
-download_if_missing "$TFLITE_WHEEL_URL" \
-    /tmp/tflite_runtime-2.17.1-cp312-cp312-linux_aarch64.whl \
-    "tflite-runtime 2.17.1 wheel"
-"$SCRIPT_DIR/venv312/bin/pip" install -q \
-    /tmp/tflite_runtime-2.17.1-cp312-cp312-linux_aarch64.whl \
-    "numpy<2" Pillow
-success "tflite-runtime 2.17.1 installed (venv312)"
-
-# ── step 5: models + labels ───────────────────────────────────────────────────
-header "Step 5/6 — Models & Labels"
+# ── step 3: models + labels ───────────────────────────────────────────────────
+header "Step 3/4 — Models & Labels"
 
 for model in "${MODELS[@]}"; do
     download_if_missing "$MODEL_BASE/$model" "$SCRIPT_DIR/$model" "$model"
@@ -242,10 +206,10 @@ done
 for label in "${LABELS[@]}"; do
     download_if_missing "$MODEL_BASE/$label" "$SCRIPT_DIR/$label" "$label"
 done
-download_if_missing "$TEST_IMAGE_URL" "$SCRIPT_DIR/parrot.jpg" "parrot.jpg (test image)"
+download_if_missing "$MODEL_BASE/parrot.jpg" "$SCRIPT_DIR/parrot.jpg" "parrot.jpg (test image)"
 
-# ── step 6: smoke test ────────────────────────────────────────────────────────
-header "Step 6/6 — Smoke Test"
+# ── step 4: smoke test ────────────────────────────────────────────────────────
+header "Step 4/4 — Smoke Test"
 
 if ! lsusb | grep -q "18d1:9302\|1a6e:089a"; then
     warn "Coral USB Accelerator not detected — plug it in and run: bash setup.sh --verify"
@@ -258,7 +222,7 @@ echo ""
 echo -e "${BOLD}Setup complete. Quick reference:${RESET}"
 echo ""
 echo "  # Image classification (Edge TPU)"
-echo "  $SCRIPT_DIR/venv312/bin/python3.12 $SCRIPT_DIR/run_inference.py <image.jpg>"
+echo "  $SCRIPT_DIR/venv39/bin/python3.9 $SCRIPT_DIR/run_inference.py <image.jpg>"
 echo ""
 echo "  # Live webcam detection (Edge TPU)"
 echo "  $SCRIPT_DIR/venv39/bin/python3.9 $SCRIPT_DIR/detect_video.py [out.mp4] [seconds] [threshold_%]"

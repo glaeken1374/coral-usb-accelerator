@@ -1,7 +1,7 @@
 # Google Coral USB Accelerator
 
-Image classification and live object detection using the Google Coral USB
-Accelerator on a Raspberry Pi (Debian trixie, aarch64).
+Image classification, live object detection, and question answering using the
+Google Coral USB Accelerator on a Raspberry Pi (Debian trixie, aarch64).
 
 ## Requirements
 
@@ -74,14 +74,44 @@ Model: SSD MobileNet v2 COCO  |  threshold: 60%
 66 frames  |  avg TPU: 16.6ms (60 fps)
 ```
 
+### Question answering (BERT)
+
+Finds answers to questions within a passage of text using MobileBERT.
+
+```bash
+# Interactive — paste a passage, then ask questions in a loop
+./ask.sh
+
+# Single question inline
+./ask.sh "When was it founded?" "The company was founded in 1998 in California."
+
+# Read passage from a file
+./ask.sh "What is the main finding?" -f paper.txt
+```
+
+Example output:
+```
+Model loaded  (CPU)
+Q: Where was the Raspberry Pi developed?
+Answer  : united kingdom
+Score   : 14.75
+Latency : 2888 ms
+```
+
+> **Note:** MobileBERT is float32 — the Edge TPU only accelerates quantized
+> models, so this runs on the Pi CPU at ~3 seconds per query. A quantized
+> Edge TPU BERT model is not publicly available.
+
 ## Models
 
-| Model | Task | Inference |
-|---|---|---|
-| `mobilenet_v2_1.0_224_quant_edgetpu.tflite` | Classification (1000 classes) | ~6 ms |
-| `ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite` | Detection (90 COCO classes) | ~17 ms |
+| Model | Task | Device | Inference |
+|---|---|---|---|
+| `mobilenet_v2_1.0_224_quant_edgetpu.tflite` | Classification (1000 classes) | Edge TPU | ~6 ms |
+| `ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite` | Detection (90 COCO classes) | Edge TPU | ~17 ms |
+| `mobilebert_qa.tflite` | Question answering (SQuAD) | CPU | ~3 s |
 
-Both are downloaded automatically by `setup.sh`. Source: [coral.ai/models](https://coral.ai/models).
+The Edge TPU models are downloaded by `setup.sh`. The BERT model is downloaded
+automatically by `ask.sh` on first run. Source: [coral.ai/models](https://coral.ai/models).
 
 ## Python environment
 

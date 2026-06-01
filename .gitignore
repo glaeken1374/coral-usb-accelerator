@@ -1,0 +1,19 @@
+# Python environments and standalone interpreters
+venv/
+venv39/
+venv312/
+python39/
+python312/
+
+# Models (large binaries — download with setup script)
+*.tflite
+
+# Video output
+*.mp4
+
+# Test images and results (not source-controlled)
+parrot.jpg
+dog.jpg
+detection_result*.jpg
+live_snapshot*.jpg
+snapshot_*.jpg

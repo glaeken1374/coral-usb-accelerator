@@ -49,11 +49,13 @@ def run(image_path, model_path=None, output_path=None, threshold=None):
         interp.invoke()
     elapsed_ms = (time.perf_counter() - t0) / 5 * 1000
 
-    outs    = {t['name']: interp.get_tensor(t['index']) for t in interp.get_output_details()}
-    boxes   = outs['StatefulPartitionedCall:3'][0]   # [25, 4] ymin xmin ymax xmax
-    classes = outs['StatefulPartitionedCall:2'][0]   # [25]
-    scores  = outs['StatefulPartitionedCall:1'][0]   # [25]
-    count   = int(outs['StatefulPartitionedCall:0'][0])
+    # Sort by tensor index — output order is consistent across all Lite variants
+    # even though the names differ (Lite0-2: :0–:3, Lite3: :31–:34)
+    out_tensors = sorted(interp.get_output_details(), key=lambda t: t['index'])
+    boxes   = interp.get_tensor(out_tensors[0]['index'])[0]   # [25, 4] ymin xmin ymax xmax
+    classes = interp.get_tensor(out_tensors[1]['index'])[0]   # [25]
+    scores  = interp.get_tensor(out_tensors[2]['index'])[0]   # [25]
+    count   = int(interp.get_tensor(out_tensors[3]['index'])[0])
 
     draw = ImageDraw.Draw(orig)
     detections = []

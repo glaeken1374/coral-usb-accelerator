@@ -15,12 +15,12 @@ BOLD='\033[1m'; CYAN='\033[0;36m'; GREEN='\033[0;32m'
 RED='\033[0;31m'; YELLOW='\033[1;33m'; RESET='\033[0m'
 
 # name | local filename | remote filename | input size | approx latency
+# Note: Lite3x (640×640) is omitted — exceeds USB transfer deadline on Coral USB Accelerator
 declare -a MODELS=(
     "Lite0  320×320  fastest, good for real-time   |efficientdet_lite0_320_ptq_edgetpu.tflite|efficientdet_lite0_320_ptq_edgetpu.tflite|320|~105 ms"
     "Lite1  384×384  balanced speed and accuracy   |efficientdet_lite1_384_ptq_edgetpu.tflite|efficientdet_lite1_384_ptq_edgetpu.tflite|384|~145 ms"
     "Lite2  448×448  better for small objects      |efficientdet_lite2_448_ptq_edgetpu.tflite|efficientdet_lite2_448_ptq_edgetpu.tflite|448|~200 ms"
     "Lite3  512×512  high accuracy                 |efficientdet_lite3_512_ptq_edgetpu.tflite|efficientdet_lite3_512_ptq_edgetpu.tflite|512|~280 ms"
-    "Lite3x 640×640  highest accuracy, slowest     |efficientdet_lite3x_640_ptq_edgetpu.tflite|efficientdet_lite3x_640_ptq_edgetpu.tflite|640|~450 ms"
 )
 
 download_if_missing() {
@@ -70,7 +70,13 @@ fi
 
 IFS='|' read -r LABEL LOCAL_NAME REMOTE_NAME SIZE LATENCY <<< "${MODELS[$((CHOICE - 1))]}"
 MODEL_PATH="$SCRIPT_DIR/$LOCAL_NAME"
-echo -e "\n${GREEN}  ✓ EfficientDet $LABEL${RESET}\n"
+echo -e "\n${GREEN}  ✓ EfficientDet $LABEL${RESET}"
+
+if [[ "$CHOICE" == "4" ]]; then
+    echo -e "${YELLOW}  ⚠ Lite3 (512px) is the largest model supported by the Coral USB Accelerator."
+    echo -e "    If it aborts with a USB transfer error, use Lite0–Lite2 instead.${RESET}"
+fi
+echo ""
 
 download_if_missing "$MODEL_BASE/$REMOTE_NAME" "$MODEL_PATH" "$LOCAL_NAME"
 
@@ -106,7 +112,12 @@ BASE="${IMAGE_PATH%.*}"; EXT="${IMAGE_PATH##*.}"
 OUTPUT="${BASE}_edet.${EXT}"
 
 echo -e "${BOLD}Running detection...${RESET}\n"
-"$PYTHON" "$SCRIPT_DIR/efficientdet.py" \
-    "$IMAGE_PATH" "$MODEL_PATH" "$OUTPUT" "$THRESHOLD"
-
-echo -e "\n${GREEN}${BOLD}Done.${RESET} Annotated image saved to: $OUTPUT"
+if "$PYTHON" "$SCRIPT_DIR/efficientdet.py" \
+    "$IMAGE_PATH" "$MODEL_PATH" "$OUTPUT" "$THRESHOLD"; then
+    echo -e "\n${GREEN}${BOLD}Done.${RESET} Annotated image saved to: $OUTPUT"
+else
+    echo -e "\n${RED}Detection failed.${RESET}"
+    echo -e "If you saw a USB transfer error, the model is too large for the Coral USB Accelerator."
+    echo -e "Try ${CYAN}Lite0${RESET}, ${CYAN}Lite1${RESET}, or ${CYAN}Lite2${RESET} instead."
+    exit 1
+fi

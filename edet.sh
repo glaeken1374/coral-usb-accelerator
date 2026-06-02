@@ -35,6 +35,22 @@ download_if_missing() {
 
 echo -e "\n${BOLD}━━ Coral EfficientDet Lite Object Detection ━━━━━━━━━━━${RESET}\n"
 
+# ── pre-flight: confirm Edge TPU is responsive ────────────────────────────────
+if ! lsusb | grep -q "18d1:9302\|1a6e:089a"; then
+    echo -e "${RED}✗ Coral USB Accelerator not detected. Is it plugged in?${RESET}"
+    exit 1
+fi
+if ! "$PYTHON" - <<'PYEOF' 2>/dev/null; then
+from pycoral.utils.edgetpu import load_edgetpu_delegate
+load_edgetpu_delegate({})
+PYEOF
+    echo -e "${RED}✗ Edge TPU delegate failed to load.${RESET}"
+    echo -e "  The device may be in a bad state after a previous crash."
+    echo -e "  ${YELLOW}Unplug and replug the Coral USB Accelerator, then try again.${RESET}"
+    exit 1
+fi
+echo -e "${GREEN}✓ Edge TPU ready${RESET}\n"
+
 # ── image path ────────────────────────────────────────────────────────────────
 if [[ $# -ge 1 ]]; then
     IMAGE_PATH="${1/#\~/$HOME}"
@@ -117,7 +133,8 @@ if "$PYTHON" "$SCRIPT_DIR/efficientdet.py" \
     echo -e "\n${GREEN}${BOLD}Done.${RESET} Annotated image saved to: $OUTPUT"
 else
     echo -e "\n${RED}Detection failed.${RESET}"
-    echo -e "If you saw a USB transfer error, the model is too large for the Coral USB Accelerator."
-    echo -e "Try ${CYAN}Lite0${RESET}, ${CYAN}Lite1${RESET}, or ${CYAN}Lite2${RESET} instead."
+    echo -e "  Possible causes:"
+    echo -e "  • Model too large for USB transfer → try ${CYAN}Lite0${RESET}, ${CYAN}Lite1${RESET}, or ${CYAN}Lite2${RESET}"
+    echo -e "  • Device in bad state after crash  → ${YELLOW}unplug and replug the Coral${RESET}"
     exit 1
 fi
